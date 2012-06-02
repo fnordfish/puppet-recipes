@@ -1,20 +1,60 @@
-# Here's how you generate a keyring file to put in your puppet fileserver and
-# reference with a puppet:///path/to/foo.gpg:
-#
-#     gpg --no-default-keyring --keyserver keyserver.ubuntu.com --keyring /path/to/fileserver/foo.gpg --recv-keys DEADBEEF
-define apt::source ($url, $suite = $::lsbdistcodename, $component = 'main', $type = 'deb', $keyring = '', $ensure = present) {
+# source.pp
+# add an apt source
 
-  if $keyring != '' {
-    file { "/etc/apt/trusted.gpg.d/${name}.gpg":
-      source => $keyring,
-      ensure => $ensure
+define apt::source(
+  $location = '',
+  $release = $lsbdistcodename,
+  $repos = 'main',
+  $include_src = true,
+  $required_packages = false,
+  $key = false,
+  $key_server = 'keyserver.ubuntu.com',
+  $key_content = false,
+  $key_source  = false,
+  $pin = false
+) {
+
+  include apt::params
+
+  if $release == undef {
+    fail("lsbdistcodename fact not available: release parameter required")
+  }
+
+  file { "${name}.list":
+    path => "${apt::params::root}/sources.list.d/${name}.list",
+    ensure => file,
+    owner => root,
+    group => root,
+    mode => 644,
+    content => template("apt/source.list.erb"),
+  }
+
+  if $pin != false {
+    apt::pin { "${release}": priority => "${pin}" } -> File["${name}.list"]
+  }
+
+  exec { "${name} apt update":
+    command => "${apt::params::provider} update",
+    subscribe => File["${name}.list"],
+    refreshonly => true,
+  }
+
+  if $required_packages != false {
+    exec { "Required packages: '${required_packages}' for ${name}":
+      command     => "${apt::params::provider} -y install ${required_packages}",
+      subscribe   => File["${name}.list"],
+      refreshonly => true,
     }
   }
 
-  file { "/etc/apt/sources.list.d/${name}.list":
-    content => "# This file is managed by puppet\n\n${type} ${url} ${suite} ${component}\n",
-    ensure => $ensure,
-    notify => Exec["apt-get update"],
+  if $key != false {
+    apt::key { "Add key: ${key} from Apt::Source ${title}":
+      key         => $key,
+      ensure      => present,
+      key_server  => $key_server,
+      key_content => $key_content,
+      key_source  => $key_source,
+      before      => File["${name}.list"],
+    }
   }
-
 }
